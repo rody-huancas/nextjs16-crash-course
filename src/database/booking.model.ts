@@ -1,5 +1,5 @@
 import Event from "./event.model";
-import { Schema, model, models, Document, Types } from "mongoose";
+import { Schema, model, models, Document, Types, HydratedDocument } from "mongoose";
 
 // Interfaz TypeScript para el documento de Reserva
 export interface IBooking extends Document {
@@ -33,36 +33,31 @@ const BookingSchema = new Schema<IBooking>(
     },
   },
   {
-    timestamps: true, // Generar automáticamente createdAt y updatedAt
+    timestamps: true,
   }
 );
 
-  // Hook pre-guardado para validar que el evento existe antes de crear la reserva
-BookingSchema.pre("save", async function (next) {
-  const booking = this as IBooking;
-
+// Hook pre-guardado para validar que el evento existe antes de crear la reserva
+BookingSchema.pre<HydratedDocument<IBooking>>("save", async function () {
   // Solo validar eventId si es nuevo o ha sido modificado
-  if (booking.isModified("eventId") || booking.isNew) {
+  if (this.isModified("eventId") || this.isNew) {
     try {
-      const eventExists = await Event.findById(booking.eventId).select("_id");
+      const eventExists = await Event.findById(this.eventId).select("_id");
 
       if (!eventExists) {
-        const error = new Error(
-          `El evento con ID ${booking.eventId} no existe`
-        );
-        error.name = "ValidationError";
-        return next(error);
+        throw new Error(`El evento con ID ${this.eventId} no existe`);
       }
-    } catch {
-      const validationError = new Error(
-        "Formato de ID de evento inválido o error de base de datos"
-      );
-      validationError.name = "ValidationError";
-      return next(validationError);
+    } catch (error) {
+      if (error instanceof Error) {
+        const validationError = new Error(
+          error.message || "Formato de ID de evento inválido o error de base de datos"
+        );
+        validationError.name = "ValidationError";
+        throw validationError;
+      }
+      throw new Error("Error de validación desconocido");
     }
   }
-
-  next();
 });
 
 // Crear índice en eventId para consultas más rápidas
@@ -76,9 +71,10 @@ BookingSchema.index({ email: 1 });
 
 // Forzar una reserva por evento por email
 BookingSchema.index(
-  { eventId: 1, email: 1 },
-  { unique: true, name: "uniq_event_email" }
+  { eventId: 1   , email: 1 },
+  { unique : true, name : "uniq_event_email" }
 );
+
 const Booking = models.Booking || model<IBooking>("Booking", BookingSchema);
 
 export default Booking;
